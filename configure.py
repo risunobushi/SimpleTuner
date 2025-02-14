@@ -526,6 +526,12 @@ def configure_env():
                 "ai-toolkit",
                 "tiny",
                 "nano",
+                # add presets here
+                # In order to activate these presets, a few lines of code are also needed in SimpleTuner/helpers/training/adapter.py (lines 94+), and SimpleTuner/helpers/configuration/cmd_args.py (line 131)
+                "top",
+                "bottom",
+                "shoes",
+                "glasses",
             ]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
