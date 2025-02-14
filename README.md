@@ -12,6 +12,8 @@ In order to configure your own preset, you need to add:
 - a unique name (e.g.: "top")
 - the target layers, with more or less precision (e.g.: "to_k" targets more layers than say, "single_transformer_blocks.7.proj_out")
 
+After committing the changes, you can call up a preset from the config file using the "flux_lora_target" flag (e.g.: "flux_lora_target": "top")
+
 
 # SimpleTuner 💹
 
