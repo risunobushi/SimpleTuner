@@ -1,3 +1,19 @@
+# Fork Changes
+
+This fork is intended to add examples for adding additional "presets" directly selectable from the config.json used for training.
+Since this fork is mostly aimed at training clothing, these additional presets will have a naming convention aimed at clothing, but you can name them however you like.
+
+The changes needed are over three files:
+- SimpleTuner/configure.py is where you add preset names to the list of accepted presets
+- SimpleTuner/helpers/configuration/cmd_args.py is where you add preset names to the list of possible command args
+- SimpleTuner/helpers/training/adapter.py is where you define a preset and its behaviour
+
+In order to configure your own preset, you need to add:
+- a unique name (e.g.: "top")
+- the target layers, with more or less precision (e.g.: "to_k" targets more layers than say, "single_transformer_blocks.7.proj_out")
+
+After committing the changes, you can call up a preset from the config file using the "flux_lora_target" flag (e.g.: "flux_lora_target": "top")
+
 # SimpleTuner 💹
 
 > ⚠️ **Warning**: The scripts in this repository have the potential to damage your training data. Always maintain backups before proceeding.
