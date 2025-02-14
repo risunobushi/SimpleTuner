@@ -129,6 +129,12 @@ def get_argument_parser():
             "ai-toolkit",
             "tiny",
             "nano",
+            # add presets here
+            # In order to activate these presets, a few lines of code are also needed in SimpleTuner/helpers/training/adapter.py (lines 94+), configure.py (lines 529+)
+            "top",
+            "bottom",
+            "shoes",
+            "glasses",
         ],
         default="all",
         help=(
