@@ -532,6 +532,8 @@ def configure_env():
                 "bottom",
                 "shoes",
                 "glasses",
+                "faces",
+                "poses",
             ]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
