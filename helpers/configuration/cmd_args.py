@@ -135,6 +135,8 @@ def get_argument_parser():
             "bottom",
             "shoes",
             "glasses",
+            "faces",
+            "poses",
         ],
         default="all",
         help=(
