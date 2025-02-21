@@ -99,6 +99,8 @@ def determine_adapter_target_modules(args, unet, transformer):
             target_modules = [
                 "single_transformer_blocks.5.proj_out",
                 "single_transformer_blocks.6.proj_out",
+                "single_transformer_blocks.15.proj_out",
+                "single_transformer_blocks.16.proj_out",
                 "single_transformer_blocks.25.proj_out",
                 "single_transformer_blocks.26.proj_out",
             ]
@@ -107,6 +109,8 @@ def determine_adapter_target_modules(args, unet, transformer):
             target_modules = [
                 "single_transformer_blocks.8.proj_out",
                 "single_transformer_blocks.9.proj_out",
+                "single_transformer_blocks.18.proj_out",
+                "single_transformer_blocks.19.proj_out",
                 "single_transformer_blocks.28.proj_out",
                 "single_transformer_blocks.29.proj_out",
             ]
@@ -115,6 +119,8 @@ def determine_adapter_target_modules(args, unet, transformer):
             target_modules = [
                 "single_transformer_blocks.1.proj_out",
                 "single_transformer_blocks.2.proj_out",
+                "single_transformer_blocks.11.proj_out",
+                "single_transformer_blocks.12.proj_out",
                 "single_transformer_blocks.21.proj_out",
                 "single_transformer_blocks.22.proj_out",
             ]
@@ -123,8 +129,24 @@ def determine_adapter_target_modules(args, unet, transformer):
             target_modules = [
                 "single_transformer_blocks.3.proj_out",
                 "single_transformer_blocks.4.proj_out",
+                "single_transformer_blocks.13.proj_out",
+                "single_transformer_blocks.14.proj_out",
                 "single_transformer_blocks.23.proj_out",
                 "single_transformer_blocks.24.proj_out",
+            ]
+
+        elif args.flux_lora_target == "faces":
+            target_modules = [
+                "single_transformer_blocks.7.proj_out",
+                "single_transformer_blocks.17.proj_out",
+                "single_transformer_blocks.27.proj_out",
+            ]
+
+        elif args.flux_lora_target == "poses":
+            target_modules = [
+                "single_transformer_blocks.10.proj_out",
+                "single_transformer_blocks.20.proj_out",
+                "single_transformer_blocks.30.proj_out",
             ]
 
         return target_modules
