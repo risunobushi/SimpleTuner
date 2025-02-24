@@ -131,10 +131,10 @@ def get_argument_parser():
             "nano",
             # add presets here
             # In order to activate these presets, a few lines of code are also needed in SimpleTuner/helpers/training/adapter.py (lines 94+), configure.py (lines 529+)
-            "top",
-            "bottom",
-            "shoes",
-            "glasses",
+            "preset1",
+            "preset2",
+            "preset3",
+            "preset4",
             "faces",
             "poses",
         ],
