@@ -95,7 +95,7 @@ def determine_adapter_target_modules(args, unet, transformer):
         # The following are a few preset examples
         # In order to activate these presets, a few lines of code are also needed in SimpleTuner/configure.py (line 528), and SimpleTuner/helpers/configuration/cmd_args.py (line 131)
 
-        elif args.flux_lora_target == "top":
+        elif args.flux_lora_target == "preset1":
             target_modules = [
                 "single_transformer_blocks.5.proj_out",
                 "single_transformer_blocks.6.proj_out",
@@ -105,7 +105,7 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "single_transformer_blocks.26.proj_out",
             ]
 
-        elif args.flux_lora_target == "bottom":
+        elif args.flux_lora_target == "preset2":
             target_modules = [
                 "single_transformer_blocks.8.proj_out",
                 "single_transformer_blocks.9.proj_out",
@@ -115,7 +115,7 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "single_transformer_blocks.29.proj_out",
             ]
 
-        elif args.flux_lora_target == "shoes":
+        elif args.flux_lora_target == "preset3":
             target_modules = [
                 "single_transformer_blocks.1.proj_out",
                 "single_transformer_blocks.2.proj_out",
@@ -125,7 +125,7 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "single_transformer_blocks.22.proj_out",
             ]
 
-        elif args.flux_lora_target == "glasses":
+        elif args.flux_lora_target == "preset4":
             target_modules = [
                 "single_transformer_blocks.3.proj_out",
                 "single_transformer_blocks.4.proj_out",
