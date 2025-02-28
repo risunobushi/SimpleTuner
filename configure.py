@@ -534,6 +534,7 @@ def configure_env():
                 "preset4",
                 "faces",
                 "poses",
+                "poses_large",
             ]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
