@@ -137,6 +137,7 @@ def get_argument_parser():
             "preset4",
             "faces",
             "poses",
+            "poses_large",
         ],
         default="all",
         help=(
