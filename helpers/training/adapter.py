@@ -149,6 +149,16 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "single_transformer_blocks.30.proj_out",
             ]
 
+        elif args.flux_lora_target == "poses_large":
+            target_modules = [
+                "single_transformer_blocks.7.proj_out",
+                "single_transformer_blocks.10.proj_out",
+                "single_transformer_blocks.17.proj_out",
+                "single_transformer_blocks.20.proj_out",
+                "single_transformer_blocks.27.proj_out",
+                "single_transformer_blocks.30.proj_out",
+            ]
+
         return target_modules
 
 
