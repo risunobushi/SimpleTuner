@@ -83,7 +83,7 @@ from lycoris import create_lycoris_from_weights
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 dtype = torch.bfloat16
-bfl_repo = "black-forest-labs/FLUX.1-dev"
+bfl_repo = "xiaozaa/catvton-flux-beta"
 
 scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(bfl_repo, subfolder="scheduler")
 text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=dtype)
