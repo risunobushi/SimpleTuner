@@ -29,7 +29,7 @@ model_classes = {
 }
 
 default_models = {
-    "flux": "black-forest-labs/FLUX.1-dev",
+    "flux": "xiaozaa/catvton-flux-beta",
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "pixart_sigma": "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
     "kolors": "kwai-kolors/kolors-diffusers",
