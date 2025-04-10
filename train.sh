@@ -8,16 +8,31 @@ if [ -z "${VENV_PATH}" ]; then
     # what if we have VIRTUAL_ENV? use that instead
     if [ -n "${VIRTUAL_ENV}" ]; then
         export VENV_PATH="${VIRTUAL_ENV}"
-    else
-        export VENV_PATH="$(pwd)/.venv"
+    elif [ -d "$PWD/.venv" ]; then
+        export VENV_PATH="$PWD/.venv"
+    elif [ -d "$PWD/venv" ]; then
+        export VENV_PATH="$PWD/venv"
     fi
 fi
+
+# If a venv hasn't already been activated, activate it now
+if [[ -z "${VIRTUAL_ENV}" ]]; then
+    source "${VENV_PATH}/bin/activate"
+fi
+
 if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
     export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)/lib"
     # if it's not empty, we will add it to LD_LIBRARY_PATH at the front:
     if [ -n "${NVJITLINK_PATH}" ]; then
         export LD_LIBRARY_PATH="${NVJITLINK_PATH}:${LD_LIBRARY_PATH}"
     fi
+fi
+
+if [ -z "${TQDM_NCOLS}" ]; then
+    export TQDM_NCOLS=125
+fi
+if [ -z "${TQDM_LEAVE}" ]; then
+    export TQDM_LEAVE=false
 fi
 
 export TOKENIZERS_PARALLELISM=false
@@ -91,7 +106,12 @@ if [ -z "${DISABLE_UPDATES}" ]; then
 fi
 # Run the training script.
 if [[ -z "${ACCELERATE_CONFIG_PATH}" ]]; then
-    ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
+    # Look for accelerate config in HF_HOME first, otherwise fallback to $HOME
+    if [[ -f "${HF_HOME}/accelerate/default_config.yaml" ]]; then
+        ACCELERATE_CONFIG_PATH="${HF_HOME}/accelerate/default_config.yaml"
+    else
+        ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
+    fi
 fi
 if [ -f "${ACCELERATE_CONFIG_PATH}" ]; then
     echo "Using Accelerate config file: ${ACCELERATE_CONFIG_PATH}"

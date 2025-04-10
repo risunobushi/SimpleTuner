@@ -20,13 +20,18 @@ from concurrent.futures import as_completed
 from hashlib import sha256
 from helpers.training import image_file_extensions
 from helpers.webhooks.mixin import WebhookMixin
+from helpers.models.ltxvideo import normalize_ltx_latents
+from helpers.models.wan import compute_wan_posterior
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def prepare_sample(
-    image: Image.Image = None, data_backend_id: str = None, filepath: str = None
+    image: Image.Image = None,
+    data_backend_id: str = None,
+    filepath: str = None,
+    model=None,
 ):
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
@@ -41,6 +46,7 @@ def prepare_sample(
         data_backend_id=data_backend_id,
         image_metadata=metadata,
         image_path=filepath,
+        model=model,
     )
     prepared_sample = training_sample.prepare()
     return (
@@ -54,6 +60,7 @@ class VAECache(WebhookMixin):
     def __init__(
         self,
         id: str,
+        model,
         vae,
         accelerator,
         metadata_backend: MetadataBackend,
@@ -65,6 +72,7 @@ class VAECache(WebhookMixin):
         resolution: float = 1024,
         maximum_image_size: float = None,
         target_downsample_size: float = None,
+        num_video_frames: int = 125,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         read_batch_size: int = 25,
@@ -75,8 +83,10 @@ class VAECache(WebhookMixin):
         max_workers: int = 32,
         vae_cache_ondemand: bool = False,
         hash_filenames: bool = False,
+        dataset_type: str = None,
     ):
         self.id = id
+        self.dataset_type = dataset_type
         if image_data_backend and image_data_backend.id != id:
             raise ValueError(
                 f"VAECache received incorrect image_data_backend: {image_data_backend}"
@@ -105,7 +115,11 @@ class VAECache(WebhookMixin):
         self.process_queue_size = process_queue_size
         self.vae_batch_size = vae_batch_size
         self.instance_data_dir = instance_data_dir
-        self.transform = MultiaspectImage.get_image_transforms()
+        self.model = model
+        self.transform_sample = model.get_transforms()
+        self.num_video_frames = None
+        if self.dataset_type == "video":
+            self.num_video_frames = num_video_frames
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
         if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:
@@ -204,7 +218,13 @@ class VAECache(WebhookMixin):
                     )
                 raise e
         try:
-            return self.cache_data_backend.torch_load(filename).to("cpu")
+            torch_data = self.cache_data_backend.torch_load(filename)
+            if isinstance(torch_data, torch.Tensor):
+                torch_data = torch_data.to("cpu")
+            elif isinstance(torch_data, dict):
+                torch_data["latents"] = torch_data["latents"].to("cpu")
+
+            return torch_data
         except Exception as e:
             if hide_errors:
                 self.debug_log(
@@ -255,6 +275,10 @@ class VAECache(WebhookMixin):
     def init_vae(self):
         if StateTracker.get_args().model_family == "sana":
             from diffusers import AutoencoderDC as AutoencoderClass
+        elif StateTracker.get_args().model_family == "ltxvideo":
+            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
+        elif StateTracker.get_args().model_family == "wan":
+            from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
 
@@ -426,6 +450,74 @@ class VAECache(WebhookMixin):
         # )
         return relevant_files
 
+    def prepare_video_latents(self, samples):
+        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
+            if samples.ndim == 4:
+                original_shape = samples.shape
+                samples = samples.unsqueeze(2)
+                logger.debug("PROCESSING IMAGE to VIDEO LATENTS CONVERSION ({original_shape} to {samples.shape})")
+            assert samples.ndim == 5, f"Expected 5D tensor, got {samples.ndim}D tensor"
+            logger.debug(
+                f"PROCESSING VIDEO to VIDEO LATENTS CONVERSION ({samples.shape})"
+            )
+            # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([1, 600, 3, 384, 395]) (B, F, C, H, W)
+            # we have to permute the video latent samples to match the image latent samples
+            num_frames = samples.shape[1]
+            if samples.shape[2] == 3:
+                original_shape = samples.shape
+                samples = samples.permute(0, 2, 1, 3, 4) # (B, C, F, H, W)
+                num_frames = samples.shape[2]
+                logger.debug(f"Found video latent of shape: {original_shape} (B, F, C, H, W) to (B, C, F, H, W) {samples.shape}")
+
+            num_frames = samples.shape[1]
+            if (
+                self.num_video_frames is not None
+                and self.num_video_frames != num_frames
+            ):
+                # we'll discard along dim2 after num_video_frames
+                samples = samples[:, :, : self.num_video_frames, :, :]
+        elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
+            raise Exception(
+                f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
+            )
+        logger.debug(f"Final samples shape: {samples.shape}")
+        return samples
+
+    def process_video_latents(self, latents_uncached):
+        output_cache_entry = latents_uncached
+        if StateTracker.get_model_family() in ["ltxvideo"]:
+            # hardcode patch size to 1 for LTX Video.
+            # patch_size, patch_size_t = self.transformer.config.patch_size, self.transformer.config.patch_size_t
+            patch_size, patch_size_t = 1, 1
+            _, _, num_frames, height, width = latents_uncached.shape
+            logger.debug(f"Latents shape: {latents_uncached.shape}")
+            latents_uncached = normalize_ltx_latents(
+                latents_uncached, self.vae.latents_mean, self.vae.latents_std
+            )
+
+            output_cache_entry = {
+                "latents": latents_uncached.shape,  # we'll log the shape first
+                "num_frames": self.num_video_frames,
+                "height": height,
+                "width": width,
+            }
+            logger.debug(f"Video latent processing results: {output_cache_entry}")
+            # we'll now overwrite the latents after logging.
+            output_cache_entry["latents"] = latents_uncached
+        elif StateTracker.get_model_family() in ["wan"]:
+            logger.debug(
+                f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
+            )
+            latents_uncached = compute_wan_posterior(
+                latents_uncached, self.vae.latents_mean, self.vae.latents_std
+            )
+        elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
+            raise Exception(
+                f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
+            )
+
+        return output_cache_entry
+
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
         Encode a batch of input images. Images must be the same dimension.
@@ -519,9 +611,14 @@ class VAECache(WebhookMixin):
                 processed_images = torch.stack(uncached_images).to(
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
+                processed_images = self.prepare_video_latents(processed_images)
                 latents_uncached = self.vae.encode(processed_images)
+
                 if hasattr(latents_uncached, "latent_dist"):
                     latents_uncached = latents_uncached.latent_dist.sample()
+                elif hasattr(latents_uncached, "sample"):
+                    latents_uncached = latents_uncached.sample()
+                latents_uncached = self.process_video_latents(latents_uncached)
                 if (
                     hasattr(self.vae, "config")
                     and hasattr(self.vae.config, "shift_factor")
@@ -529,23 +626,64 @@ class VAECache(WebhookMixin):
                 ):
                     latents_uncached = (
                         latents_uncached - self.vae.config.shift_factor
-                    ) * self.vae.config.scaling_factor
-                else:
-                    latents_uncached = (
-                        getattr(latents_uncached, "latent", latents_uncached)
-                        * self.vae.config.scaling_factor
+                    ) * getattr(
+                        self.model,
+                        "AUTOENCODER_SCALING_FACTOR",
+                        self.vae.config.scaling_factor,
                     )
-                logger.debug(f"Latents shape: {latents_uncached.shape}")
+                elif isinstance(latents_uncached, torch.Tensor) and hasattr(
+                    self.vae.config, "scaling_factor"
+                ):
+                    latents_uncached = getattr(
+                        latents_uncached, "latent", latents_uncached
+                    ) * getattr(
+                        self.model,
+                        "AUTOENCODER_SCALING_FACTOR",
+                        self.vae.config.scaling_factor,
+                    )
+                    logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
-            cached_idx, uncached_idx = 0, 0
-            for i in range(batch_size):
-                if i in uncached_image_indices:
-                    latents.append(latents_uncached[uncached_idx])
-                    uncached_idx += 1
-                else:
-                    latents.append(self._read_from_storage(full_filenames[i]))
-                    cached_idx += 1
+            if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
+                # video models tend to return a dict with latents.
+                raw_latents = latents_uncached["latents"]
+                num_samples = raw_latents.shape[0]
+                for i in range(num_samples):
+                    # Each sub-dict is shape [1, 128, F, H, W]
+                    single_latent = raw_latents[i : i + 1].squeeze(0)
+                    chunk = {
+                        "latents": single_latent,
+                        "num_frames": latents_uncached["num_frames"],
+                        "height": latents_uncached["height"],
+                        "width": latents_uncached["width"],
+                    }
+                    latents.append(chunk)
+            elif hasattr(latents_uncached, "latent"):
+                # this one happens with sana really, so far.
+                raw_latents = latents_uncached["latent"]
+                num_samples = raw_latents.shape[0]
+                for i in range(num_samples):
+                    # Each sub-dict is shape [b, c, H, W], we want just 1 b at a time
+                    single_latent = raw_latents[i : i + 1].squeeze(0)
+                    logger.debug(f"Adding shape: {single_latent.shape}")
+                    latents.append(single_latent)
+            elif isinstance(latents_uncached, torch.Tensor):
+                # it seems like sdxl and some others end up here
+                cached_idx, uncached_idx = 0, 0
+                for i in range(batch_size):
+                    if i in uncached_image_indices:
+                        # logger.info(
+                        #     f"Adding latent {uncached_idx} of ({len(latents_uncached)}: {latents_uncached})"
+                        # )
+                        latents.append(latents_uncached[uncached_idx])
+                        uncached_idx += 1
+                    else:
+                        latents.append(self._read_from_storage(full_filenames[i]))
+                        cached_idx += 1
+            else:
+                raise ValueError(
+                    f"Unknown handler for latent encoding type: {type(latents_uncached)}"
+                )
         return latents
 
     def _write_latents_in_batch(self, input_latents: list = None):
@@ -568,7 +706,11 @@ class VAECache(WebhookMixin):
                 )
             filepaths.append(output_file)
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
-            latents.append(latent_vector.clone())
+            if isinstance(latent_vector, dict):
+                latent_vector["latents"] = latent_vector["latents"].clone()
+                latents.append(latent_vector)
+            else:
+                latents.append(latent_vector.clone())
 
         self.cache_data_backend.write_batch(filepaths, latents)
 
@@ -632,6 +774,7 @@ class VAECache(WebhookMixin):
                         prepare_sample,
                         data_backend_id=self.id,
                         filepath=data[0],
+                        model=self.model,
                     )
                     for data in initial_data
                 ]
@@ -686,7 +829,7 @@ class VAECache(WebhookMixin):
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
-                pixel_values = self.transform(image).to(
+                pixel_values = self.transform_sample(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
                 output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)

@@ -2,6 +2,7 @@ from os import environ
 from pathlib import Path
 import json
 import logging
+from helpers.models.all import model_families
 
 logger = logging.getLogger("StateTracker")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -17,6 +18,7 @@ class StateTracker:
     config_path = None
     # Class variables
     model_type = ""
+    model = None
     # Job ID for FastAPI. None if local.
     job_id = None
 
@@ -113,22 +115,21 @@ class StateTracker:
 
     @classmethod
     def set_model_family(cls, model_type: str):
-        if model_type not in [
-            "legacy",
-            "sdxl",
-            "sd3",
-            "pixart_sigma",
-            "kolors",
-            "smoldit",
-            "flux",
-            "sana",
-        ]:
+        if model_type not in model_families.keys():
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
 
     @classmethod
     def get_model_family(cls):
         return cls.model_type
+
+    @classmethod
+    def set_model(cls, model):
+        cls.model = model
+
+    @classmethod
+    def get_model(cls):
+        return cls.model
 
     @classmethod
     def get_hf_user(cls):
@@ -425,10 +426,12 @@ class StateTracker:
         cls.data_backends = {}
 
     @classmethod
-    def get_data_backends(cls, _type="image"):
+    def get_data_backends(cls, _type="image", _types=["image", "video"]):
         output = {}
         for backend_id, backend in dict(cls.data_backends).items():
-            if backend.get("dataset_type", "image") == _type:
+            if backend.get("dataset_type", "image") == _type or (
+                type(_types) is list and backend.get("dataset_type", "image") in _types
+            ):
                 output[backend_id] = backend
         return output
 
@@ -490,7 +493,7 @@ class StateTracker:
 
     @classmethod
     def get_vaecache(cls, id: str):
-        return cls.data_backends[id]["vaecache"]
+        return cls.data_backends[id].get("vaecache", None)
 
     @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
@@ -506,7 +509,7 @@ class StateTracker:
 
     @classmethod
     def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
-        for _, data_backend in cls.get_data_backends().items():
+        for _, data_backend in cls.get_data_backends(_types=["image", "video"]).items():
             if "metadata_backend" not in data_backend:
                 continue
             if data_backend_id != data_backend["metadata_backend"].id:

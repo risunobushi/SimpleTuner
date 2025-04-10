@@ -26,7 +26,7 @@ Luckily, these are readily available through providers such as [LambdaLabs](http
 
 ### Prerequisites
 
-Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
+Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.
 
 You can check this by running:
 
@@ -34,15 +34,15 @@ You can check this by running:
 python --version
 ```
 
-If you don't have python 3.11 installed on Ubuntu, you can try the following:
+If you don't have python 3.12 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11 python3.11-venv
+apt -y install python3.12 python3.12-venv
 ```
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.4 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
 
 ```bash
 apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
@@ -75,11 +75,11 @@ poetry config virtualenvs.create false
 Depending on your system, you will run one of 3 commands:
 
 ```bash
+# Linux with NVIDIA
+poetry install
+
 # MacOS
 poetry install -C install/apple
-
-# Linux
-poetry install
 
 # Linux with ROCM
 poetry install -C install/rocm
@@ -226,11 +226,7 @@ When using a `--flow_schedule_shift` value of 4.0 (a very high value), the large
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training Flux on just 16GB.
 
-Inside your SimpleTuner venv:
 
-```bash
-pip install optimum-quanto
-```
 
 For `config.json` users:
 ```json
@@ -413,7 +409,7 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
 - System memory: 50G of system memory approximately
-- Base model precision: `bnb-nf4`
+- Base model precision: `nf4-bnb`
 - Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
 - Resolution: 512px
   - 1024px requires >= 12G VRAM

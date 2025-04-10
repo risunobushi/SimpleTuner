@@ -27,7 +27,7 @@ SimpleTuner's Sana modeling code allows the specification of `--gradient_checkpo
 
 ### Prerequisites
 
-Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
+Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.
 
 You can check this by running:
 
@@ -35,15 +35,15 @@ You can check this by running:
 python --version
 ```
 
-If you don't have python 3.11 installed on Ubuntu, you can try the following:
+If you don't have python 3.12 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11 python3.11-venv
+apt -y install python3.12 python3.12-venv
 ```
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.4 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
 
 ```bash
 apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
@@ -182,7 +182,7 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 
 #### Sana time schedule shifting
 
-Flow-matching models such as Sana, Sana, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
+Flow-matching models such as Sana, Flux, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
 
 ##### Auto-shift
 A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
@@ -332,7 +332,7 @@ Currently, the lowest VRAM utilisation can be attained with:
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
 - System memory: 50G of system memory approximately
-- Base model precision: `bnb-nf4`
+- Base model precision: `nf4-bnb`
 - Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
 - Resolution: 1024px
 - Batch size: 1, zero gradient accumulation steps

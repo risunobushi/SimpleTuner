@@ -13,6 +13,7 @@ from helpers.caching.vae import VAECache
 from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import ModelFoundation
 
 import json
 import os
@@ -26,6 +27,7 @@ import queue
 from math import sqrt
 import pandas as pd
 import numpy as np
+from typing import Union
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -48,6 +50,16 @@ def prefetch_log_debug(message):
 def info_log(message):
     if StateTracker.get_accelerator().is_main_process:
         logger.info(message)
+
+
+def warning_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.warning(message)
+
+
+def debug_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.debug(message)
 
 
 def check_column_values(
@@ -134,7 +146,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     # Image backend config
     output["dataset_type"] = backend.get("dataset_type", "image")
-    choices = ["image", "conditioning", "eval"]
+    choices = ["image", "conditioning", "eval", "video"]
     if (
         StateTracker.get_args().controlnet
         and output["dataset_type"] == "image"
@@ -270,7 +282,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
-        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -289,19 +300,70 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
-        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
         )
 
+    if backend.get("dataset_type", None) == "video":
+        output["config"]["video"] = {}
+        if "video" in backend:
+            output["config"]["video"].update(backend["video"])
+        if "num_frames" not in output["config"]["video"]:
+            default_num_seconds = 5
+            video_duration_in_frames = args.framerate * default_num_seconds
+            warning_log(
+                f"No `num_frames` was provided for video backend. Defaulting to {video_duration_in_frames} ({default_num_seconds} seconds @ {args.framerate}fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."
+            )
+            output["config"]["video"]["num_frames"] = video_duration_in_frames
+        if "min_frames" not in output["config"]["video"]:
+            warning_log(
+                f"No `min_frames` was provided for video backend. Defaulting to {output['config']['video']['num_frames']} frames (num_frames). Reduce num_frames further for lower memory use."
+            )
+            output["config"]["video"]["min_frames"] = output["config"]["video"][
+                "num_frames"
+            ]
+        if "max_frames" not in output["config"]["video"]:
+            warning_log(
+                f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
+            )
+        if "is_i2v" not in output["config"]["video"]:
+            if args.model_family in ["ltxvideo"]:
+                warning_log(
+                    f"Setting is_i2v to True for model_family={args.model_family}. Set this manually to false to override."
+                )
+                output["config"]["video"]["is_i2v"] = True
+            else:
+                warning_log(
+                    f"No value for is_i2v was supplied for your dataset. Assuming it is disabled."
+                )
+                output["config"]["video"]["is_i2v"] = False
+
+        min_frames = output["config"]["video"]["min_frames"]
+        num_frames = output["config"]["video"]["num_frames"]
+        # both should be integers
+        if not any([isinstance(min_frames, int), isinstance(num_frames, int)]):
+            raise ValueError(
+                f"video->min_frames and video->num_frames must be integers. Received min_frames={min_frames} and num_frames={num_frames}."
+            )
+        if min_frames < 1 or num_frames < 1:
+            raise ValueError(
+                f"video->min_frames and video->num_frames must be greater than 0. Received min_frames={min_frames} and num_frames={num_frames}."
+            )
+        if min_frames < num_frames:
+            raise ValueError(
+                f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
+            )
+
     return output
 
 
-def print_bucket_info(metadata_backend):
+def print_bucket_info(metadata_backend, dataset_type: str = "image"):
     # Print table header
     if get_rank() == 0:
-        tqdm.write(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
+        tqdm.write(
+            f"{rank_info()} | {'bucket':<10} | {f'{dataset_type} count (per-GPU)':<12}"
+        )
 
         # Print separator
         tqdm.write("-" * 30)
@@ -391,7 +453,17 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
+def move_text_encoders(text_encoders: list, target_device: str):
+    """Move text encoders to the target device."""
+    if text_encoders is None:
+        return
+    logger.debug(f"Moving text encoders to {target_device}")
+    return [encoder.to(target_device) for encoder in text_encoders]
+
+
+def configure_multi_databackend(
+    args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
+):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -488,6 +560,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         # Generate a TextEmbeddingCache object
         logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
+        move_text_encoders(text_encoders, accelerator.device)
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
@@ -497,6 +570,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+            model=model,
         )
         logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
         init_backend["text_embed_cache"].set_webhook_handler(
@@ -517,6 +591,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             info_log("Pre-computing null embedding")
             logger.debug(f"rank {get_rank()} may skip computing the embedding..")
             with accelerator.main_process_first():
+                model.get_pipeline()
                 logger.debug(f"rank {get_rank()} is computing the null embed")
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
@@ -529,11 +604,12 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             accelerator.wait_for_everyone()
             logger.debug(f"rank {get_rank()} is continuing")
         if args.caption_dropout_probability == 0.0:
-            logger.warning(
+            warning_log(
                 "Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption_dropout_probability=0.1 as a recommended value."
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
+        # move_text_encoders(text_encoders, "cpu")
         text_embed_backends[init_backend["id"]] = init_backend
 
     if not text_embed_backends:
@@ -548,7 +624,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "\nSee this link for more information on how to configure a default text embed dataset: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
     elif not default_text_embed_backend_id:
-        logger.warning(
+        warning_log(
             f"No default text embed was defined, using {list(text_embed_backends.keys())[0]} as the default."
             " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
@@ -623,6 +699,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "image",
             "conditioning",
             "eval",
+            "video",
         ]:
             # image, conditioning, and eval sets are all included in this
             continue
@@ -635,7 +712,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         if (
             "id" not in backend
             or backend["id"] == ""
-            or backend["id"] in StateTracker.get_data_backends()
+            or backend["id"]
+            in StateTracker.get_data_backends(_types=["image", "video"])
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
         info_log(f"Configuring data backend: {backend['id']}")
@@ -784,11 +862,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         if metadata_backend == "json" or metadata_backend == "discovery":
             from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 
-            BucketManager_cls = DiscoveryMetadataBackend
+            MetadataBackendCls = DiscoveryMetadataBackend
         elif metadata_backend == "parquet":
             from helpers.metadata.backends.parquet import ParquetMetadataBackend
 
-            BucketManager_cls = ParquetMetadataBackend
+            MetadataBackendCls = ParquetMetadataBackend
             metadata_backend_args["parquet_config"] = backend.get("parquet", None)
             if not metadata_backend_args["parquet_config"]:
                 raise ValueError(
@@ -797,7 +875,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
-        init_backend["metadata_backend"] = BucketManager_cls(
+        video_config = init_backend["config"].get("video", {})
+        init_backend["metadata_backend"] = MetadataBackendCls(
             id=init_backend["id"],
             instance_data_dir=init_backend["instance_data_dir"],
             data_backend=init_backend["data_backend"],
@@ -808,6 +887,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             ),
             minimum_aspect_ratio=backend.get("minimum_aspect_ratio", None),
             maximum_aspect_ratio=backend.get("maximum_aspect_ratio", None),
+            minimum_num_frames=video_config.get("min_frames", None),
+            maximum_num_frames=video_config.get("max_frames", None),
+            num_frames=video_config.get("num_frames", None),
             resolution_type=backend.get("resolution_type", args.resolution_type),
             batch_size=args.train_batch_size,
             metadata_update_interval=backend.get(
@@ -902,31 +984,44 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                                 f"\n{prev_config}"
                             )
                         else:
-                            logger.warning(
+                            warning_log(
                                 f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
                             )
                             prev_config[key] = backend[key]
                     elif key not in backend:
                         if should_log():
-                            logger.warning(
+                            warning_log(
                                 f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
                             )
                         init_backend["config"][key] = prev_config[key]
 
         init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        info_log(f"Configured backend: {init_backend}")
 
-        print_bucket_info(init_backend["metadata_backend"])
+        init_backend_debug_info = {
+            k: v
+            for k, v in init_backend.items()
+            if isinstance(v, Union[list, int, float, str, dict, tuple])
+        }
+        info_log(f"Configured backend: {init_backend_debug_info}")
+
         if len(init_backend["metadata_backend"]) == 0 and conditioning_type is None:
             raise Exception(
                 f"No images were discovered by the bucket manager in the dataset: {init_backend['id']}."
             )
+        print_bucket_info(
+            init_backend["metadata_backend"], init_backend.get("dataset_type")
+        )
 
         use_captions = True
         is_regularisation_data = backend.get(
             "is_regularisation_data", backend.get("is_regularization_data", False)
         )
+
+        is_i2v_data = backend.get("video", {}).get(
+            "is_i2v", True if args.ltx_train_mode == "i2v" else False
+        )
+
         if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
             use_captions = False
         elif args.only_instance_prompt:
@@ -935,15 +1030,16 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             id=init_backend["id"],
             datasets=[init_backend["metadata_backend"]],
             is_regularisation_data=is_regularisation_data,
+            is_i2v_data=is_i2v_data,
         )
 
         if "deepfloyd" in args.model_type:
             if init_backend["metadata_backend"].resolution_type == "area":
-                logger.warning(
+                warning_log(
                     "Resolution type is 'area', but should be 'pixel' for DeepFloyd. Unexpected results may occur."
                 )
                 if init_backend["metadata_backend"].resolution > 0.25:
-                    logger.warning(
+                    warning_log(
                         "Resolution is greater than 0.25 megapixels. This may lead to unconstrained memory requirements."
                     )
             if init_backend["metadata_backend"].resolution_type == "pixel":
@@ -951,14 +1047,14 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                     "stage2" not in args.model_type
                     and init_backend["metadata_backend"].resolution > 64
                 ):
-                    logger.warning(
+                    warning_log(
                         "Resolution is greater than 64 pixels, which will possibly lead to poor quality results."
                     )
 
         if "deepfloyd-stage2" in args.model_type:
             # Resolution must be at least 256 for Stage II.
             if init_backend["metadata_backend"].resolution < 256:
-                logger.warning(
+                warning_log(
                     "Increasing resolution to 256, as is required for DF Stage II."
                 )
 
@@ -966,6 +1062,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
+            model=model,
             accelerator=accelerator,
             batch_size=args.train_batch_size,
             debug_aspect_buckets=args.debug_aspect_buckets,
@@ -982,6 +1079,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
+            dataset_type=backend.get("dataset_type"),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, args, init_backend["data_backend"])
@@ -1038,6 +1136,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
+            move_text_encoders(text_encoders, accelerator.device)
+            model.get_pipeline()
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
@@ -1056,10 +1156,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
 
-        if (
-            "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
-        ):
+        if getattr(
+            model, "AUTOENCODER_CLASS", None
+        ) is not None and conditioning_type not in ["mask", "controlnet"]:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
@@ -1082,8 +1181,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 raise ValueError(
                     f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
                 )
+            move_text_encoders(text_encoders, "cpu")
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
+                dataset_type=init_backend["dataset_type"],
+                model=model,
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],
@@ -1095,6 +1197,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 ),
                 resolution=backend.get("resolution", args.resolution),
                 resolution_type=backend.get("resolution_type", args.resolution_type),
+                num_video_frames=video_config.get("num_frames", None),
                 maximum_image_size=backend.get(
                     "maximum_image_size",
                     args.maximum_image_size
@@ -1120,6 +1223,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
+            move_text_encoders(text_encoders, accelerator.device)
             init_backend["vaecache"].set_webhook_handler(
                 StateTracker.get_webhook_handler()
             )
@@ -1176,7 +1280,12 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
 
-        info_log(f"Configured backend: {init_backend}")
+        init_backend_debug_info = {
+            k: v
+            for k, v in init_backend.items()
+            if isinstance(v, Union[list, int, float, str, dict, tuple])
+        }
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()
@@ -1196,7 +1305,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "conditioning_data"
         ] not in StateTracker.get_data_backends(_type="conditioning"):
             raise ValueError(
-                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends()}."
+                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends(_type='conditionin')}."
             )
         if "conditioning_data" in backend:
             StateTracker.set_conditioning_dataset(
@@ -1206,11 +1315,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 f"Successfully configured conditioning image dataset for {backend['id']}"
             )
 
-    if len(StateTracker.get_data_backends()) == 0:
+    if len(StateTracker.get_data_backends(_types=["image", "video"])) == 0:
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
-    return StateTracker.get_data_backends()
+    return StateTracker.get_data_backends(_types=["image", "video"])
 
 
 def get_local_backend(
@@ -1269,7 +1378,7 @@ def check_csv_config(backend: dict, args) -> None:
                 f"Missing required key {key} in CSV backend config: {required_keys[key]}"
             )
     if not args.compress_disk_cache:
-        logger.warning(
+        warning_log(
             "You can save more disk space for cache objects by providing --compress_disk_cache and recreating its contents"
         )
     caption_strategy = backend.get("caption_strategy")
@@ -1356,7 +1465,8 @@ def get_backend_weight(backend_id, backend, step):
 
         # Calculate the weight based on dataset length
         length_factor = dataset_length / sum(
-            StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends()
+            StateTracker.get_dataset_size(b)
+            for b in StateTracker.get_data_backends(_types=["image", "video"])
         )
 
         # Adjust the probability by length factor

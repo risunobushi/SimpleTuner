@@ -22,11 +22,13 @@ class MultiAspectDataset(Dataset):
         datasets: list,
         print_names: bool = False,
         is_regularisation_data: bool = False,
+        is_i2v_data: bool = False,
     ):
         self.id = id
         self.datasets = datasets
         self.print_names = print_names
         self.is_regularisation_data = is_regularisation_data
+        self.is_i2v_data = is_i2v_data
 
     def __len__(self):
         # Sum the length of all data backends:
@@ -37,6 +39,7 @@ class MultiAspectDataset(Dataset):
             "training_samples": [],
             "conditioning_samples": [],
             "is_regularisation_data": self.is_regularisation_data,
+            "is_i2v_data": self.is_i2v_data,
         }
         first_aspect_ratio = None
         for sample in image_tuple:
@@ -56,7 +59,7 @@ class MultiAspectDataset(Dataset):
                         raise ValueError(
                             f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {calculated_aspect_ratio}"
                         )
-                if "deepfloyd" not in StateTracker.get_args().model_type and (
+                if "deepfloyd" not in StateTracker.get_args().model_family and (
                     image_metadata["original_size"] is None
                     or image_metadata["target_size"] is None
                 ):

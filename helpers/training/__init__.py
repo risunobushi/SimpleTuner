@@ -18,11 +18,27 @@ if torch.cuda.is_available():
         ]
     )
     primary_device = torch.cuda.get_device_properties(0)
-    if primary_device.major >= 9:
+    if primary_device.major >= 8:
         # Hopper! Or blackwell+.
         quantised_precision_levels.append("fp8-torchao")
 
-image_file_extensions = set(["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif"])
+image_file_extensions = set(
+    [
+        "jpg",
+        "jpeg",
+        "png",
+        "webp",
+        "bmp",
+        "tiff",
+        "tif",
+        "mp4",
+        "avi",
+        "gif",
+        "mov",
+        "webm",
+    ]
+)
+video_file_extensions = set(["mp4", "avi", "gif", "mov", "webm"])
 
 lycoris_defaults = {
     "lora": {

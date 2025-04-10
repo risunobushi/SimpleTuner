@@ -6,7 +6,7 @@ Kolors is roughly the same size as SDXL, so you can try `full` training, but the
 
 ### Prerequisites
 
-Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
+Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.
 
 You can check this by running:
 
@@ -14,15 +14,15 @@ You can check this by running:
 python --version
 ```
 
-If you don't have python 3.11 installed on Ubuntu, you can try the following:
+If you don't have python 3.12 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11 python3.11-venv
+apt -y install python3.12 python3.12-venv
 ```
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.4 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
 
 ```bash
 apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
@@ -52,11 +52,11 @@ poetry config virtualenvs.create false
 Depending on your system, you will run one of 3 commands:
 
 ```bash
+# Linux with NVIDIA
+poetry install
+
 # MacOS
 poetry install -C install/apple
-
-# Linux
-poetry install
 
 # Linux with ROCM
 poetry install -C install/rocm
@@ -114,7 +114,7 @@ There, you will need to modify the following variables:
 ```json
 {
   "model_type": "lora",
-  "model_family": "kolora",
+  "model_family": "kolors",
   "pretrained_model_name_or_path": "Kwai-Kolors/Kolors-diffusers",
   "output_dir": "/home/user/output/models",
   "validation_resolution": "1024x1024,1280x768",
@@ -138,20 +138,13 @@ There, you will need to modify the following variables:
 There are a few more if using a Mac M-series machine:
 
 - `mixed_precision` should be set to `no`.
-- `USE_XFORMERS` should be set to `false`.
+- `attention_mechanism` should be set to `diffusers`, since `xformers` and other values probably will not work.
 
 #### Quantised model training
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements of especially ChatGLM 6B (the text encoder).
 
-Inside your SimpleTuner venv:
-
-```bash
-pip install optimum-quanto
-```
-
 For `config.json`:
-
 ```json
 {
   "base_model_precision": "int8-quanto",

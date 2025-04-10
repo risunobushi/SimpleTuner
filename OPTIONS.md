@@ -33,7 +33,7 @@ The script `configure.py` in the project root can be used via `python configure.
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
-- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository.
+- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository. This also supports single-file `.safetensors` paths for SDXL, Flux, and SD3.x.
 
 ### `--pretrained_t5_model_name_or_path`
 
@@ -400,7 +400,7 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 --model_family
-                {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,legacy}
+                {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,ltxvideo,legacy}
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
@@ -420,6 +420,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
                 [--flux_guidance_max FLUX_GUIDANCE_MAX]
                 [--flux_attention_masked_training]
+                [--ltx_train_mode {t2v,i2v}] [--ltx_i2v_prob LTX_I2V_PROB]
+                [--ltx_protect_first_frame]
+                [--ltx_partial_noise_fraction LTX_PARTIAL_NOISE_FRACTION]
                 [--t5_padding {zero,unmodified}] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion,sd35}]
@@ -479,7 +482,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--parquet_filename_column PARQUET_FILENAME_COLUMN]
                 [--instance_prompt INSTANCE_PROMPT] [--output_dir OUTPUT_DIR]
                 [--seed SEED] [--seed_for_each_device SEED_FOR_EACH_DEVICE]
-                [--resolution RESOLUTION]
+                [--framerate FRAMERATE] [--resolution RESOLUTION]
                 [--resolution_type {pixel,area,pixel_area}]
                 [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
                 [--aspect_bucket_alignment {8,64}]
@@ -524,7 +527,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
                 [--benchmark_base_model] [--disable_benchmark]
-                [--evaluation_type {clip,none}]
+                [--evaluation_type {clip,none}] [--eval_dataset_pooling]
                 [--pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
@@ -547,6 +550,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--validation_steps VALIDATION_STEPS]
+                [--eval_steps_interval EVAL_STEPS_INTERVAL]
+                [--eval_timesteps EVAL_TIMESTEPS]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_dataset_id EVAL_DATASET_ID]
                 [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
@@ -610,7 +615,7 @@ options:
                         The standard deviation of the data used in the soft
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
-  --model_family {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,legacy}
+  --model_family {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,ltxvideo,legacy}
                         The model family to train. This option is required.
   --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
                         The training type to use. 'full' will train the full
@@ -717,6 +722,31 @@ options:
                         Use attention masking while training flux. This can be
                         a destructive operation, unless finetuning a model
                         which was already trained with it.
+  --ltx_train_mode {t2v,i2v}
+                        This value will be the default for all video datasets
+                        that do not have their own i2v settings defined. By
+                        default, we enable i2v mode, but it can be switched to
+                        t2v for your convenience.
+  --ltx_i2v_prob LTX_I2V_PROB
+                        Probability in [0,1] of applying i2v (image-to-video)
+                        style training. If random.random() < i2v_prob during
+                        training, partial or complete first-frame protection
+                        will be triggered (depending on
+                        --ltx_protect_first_frame). If set to 0.0, no i2v
+                        logic is applied (pure t2v). Default: 0.1 (from
+                        finetuners project)
+  --ltx_protect_first_frame
+                        If specified, fully protect the first frame whenever
+                        i2v logic is triggered (see --ltx_i2v_prob). This
+                        means the first frame is never noised or denoised,
+                        effectively pinned to the original content.
+  --ltx_partial_noise_fraction LTX_PARTIAL_NOISE_FRACTION
+                        Maximum fraction of noise to introduce into the first
+                        frame when i2v is triggered and the first frame is not
+                        fully protected. For instance, a value of 0.05 means
+                        the first frame can have up to 5 percent random noise
+                        mixed in, preserving 95 percent of the original
+                        content. Ignored if --ltx_protect_first_frame is set.
   --t5_padding {zero,unmodified}
                         The padding behaviour for Flux and SD3. 'zero' will
                         pad the input with zeros. The default is 'unmodified',
@@ -789,7 +819,15 @@ options:
                         hub.
   --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
-                        huggingface.co/models.
+                        huggingface.co/models. Some model architectures
+                        support loading single-file .safetensors directly.
+                        Note that when using single-file safetensors, the
+                        tokeniser and noise schedule configs will be used from
+                        the vanilla upstream Huggingface repository, which
+                        requires network access. If you are training on a
+                        machine without network access, you should pre-
+                        download the entire Huggingface model repository
+                        instead of using single-file loader.
   --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
                         Path to pretrained transformer model or model
                         identifier from huggingface.co/models.
@@ -1092,6 +1130,11 @@ options:
                         use the same seed across all GPUs, which will almost
                         certainly result in the over-sampling of inputs on
                         larger datasets.
+  --framerate FRAMERATE
+                        By default, SimpleTuner will use a framerate of 25 for
+                        training and inference on video models. You are on
+                        your own if you modify this value, but it is provided
+                        for your convenience.
   --resolution RESOLUTION
                         The resolution for input images, all the images in the
                         train/validation dataset will be resized to this
@@ -1354,6 +1397,11 @@ options:
                         function. The default is to use no evaluator, and
                         'clip' will use a CLIP model to evaluate the resulting
                         model's performance during validations.
+  --eval_dataset_pooling
+                        When provided, only the pooled evaluation results will
+                        be returned in a single chart from all eval sets.
+                        Without this option, all eval sets will have separate
+                        charts.
   --pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH
                         Optionally provide a custom model to use for ViT
                         evaluations. The default is currently clip-vit-large-
@@ -1457,20 +1505,35 @@ options:
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images that should be generated during
                         validation with `validation_prompt`.
+  --validation_disable
+                        Enable to completely disable all validation.
   --validation_steps VALIDATION_STEPS
                         Run validation every X steps. Validation consists of
                         running the prompt `args.validation_prompt` multiple
                         times: `args.num_validation_images` and logging the
                         images.
+  --eval_steps_interval EVAL_STEPS_INTERVAL
+                        When set, the model will be evaluated every X steps.
+                        This is useful for monitoring the model's progress
+                        during training, but it requires an eval set
+                        configured in your dataloader.
+  --eval_timesteps EVAL_TIMESTEPS
+                        Defines how many timesteps to sample during eval. You
+                        can emulate inference by setting this to the value of
+                        --validation_num_inference_steps.
   --num_eval_images NUM_EVAL_IMAGES
                         If possible, this many eval images will be selected
                         from each dataset. This is used when training super-
                         resolution models such as DeepFloyd Stage II, which
-                        will upscale input images from the training set.
+                        will upscale input images from the training set during
+                        validation. If using --eval_steps_interval, this will
+                        be the number of batches sampled for loss
+                        calculations.
   --eval_dataset_id EVAL_DATASET_ID
                         When provided, only this dataset's images will be used
                         as the eval set, to keep the training and eval images
-                        split.
+                        split. This option only applies for img2img
+                        validations, not validation loss calculations.
   --validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS
                         The default scheduler, DDIM, benefits from more steps.
                         UniPC can do well with just 10-15. For more speed

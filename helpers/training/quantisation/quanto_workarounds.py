@@ -1,6 +1,4 @@
-import torch
-
-import optimum
+import torch, optimum
 
 if torch.cuda.is_available():
     # the marlin fp8 kernel needs some help with dtype casting for some reason
@@ -114,3 +112,4 @@ def reshape_qlf_backward(ctx, gO):
 
 
 optimum.quanto.tensor.function.QuantizedLinearFunction.backward = reshape_qlf_backward
+
