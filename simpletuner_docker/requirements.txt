@@ -1,0 +1,8 @@
+runpod==1.5.0
+python-dotenv==1.0.1
+pydantic==2.5.2
+requests==2.31.0
+tqdm==4.65.0
+pillow==10.1.0
+psutil==5.9.6
+boto3==1.33.6 
