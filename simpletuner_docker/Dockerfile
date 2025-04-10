@@ -9,7 +9,7 @@ RUN apt-get update -y
 
 # Prevents different commands from being stuck by waiting
 # on user input during build
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install libg dependencies
 RUN apt install libgl1-mesa-glx -y
@@ -49,7 +49,7 @@ RUN python3 -m venv .venv && \
     poetry install --no-root
 
 # Install RunPod serverless requirements
-COPY requirements.txt /requirements.txt
+COPY simpletuner_docker/requirements.txt /requirements.txt
 RUN pip install -r /requirements.txt
 
 # Create working directories
@@ -57,14 +57,14 @@ RUN mkdir -p /workspace/inputs && \
     mkdir -p /workspace/outputs
 
 # Copy handler and startup script
-COPY handler.py /handler.py
-COPY start.sh /start.sh
+COPY simpletuner_docker/handler.py /handler.py
+COPY simpletuner_docker/start.sh /start.sh
 
 # Make startup script executable
 RUN chmod +x /start.sh
 
 # Set default environment variables
-ENV PYTHONPATH="${PYTHONPATH}:/SimpleTuner"
+ENV PYTHONPATH="/SimpleTuner:${PYTHONPATH:-}"
 ENV PYTHONUNBUFFERED=1
 
 # Default command
